@@ -12,7 +12,7 @@ int main ()	{
 	{
 		for (int j = 0; j < img.cols; ++j)
 		{
-			img.at<uchar>(i, j) = static_cast<uchar>(128 + 127 * sin(i / 10.0) * cos(j / 10.0));
+			img.at<uchar>(i, j) = static_cast<uchar>(128 + 127 * sin(i / 300.f) * cos(j / 300.0));
 		}
 		
 	}
@@ -118,7 +118,7 @@ int main ()	{
 	cv::Mat labelMat;
 	cv::normalize(labelMat32, labelMat, 0, 255, cv::NORM_MINMAX, CV_8U);
 
-	ManagedCUDABuffer interpolatedContourImage(sizeInBytes * sizeof(NppiPoint32f));
+	
 
 
 
@@ -178,7 +178,69 @@ int main ()	{
 
 
 
+	ManagedCUDABuffer interpolatedContourImage(sizeInBytes * sizeof(NppiPoint32f));
 
+	status = nppiContoursImageMarchingSquaresInterpolation_32f_C1R_Ctx(
+		static_cast<Npp8u*>(contourImg),
+		imageStride,
+		static_cast<NppiPoint32f*>(interpolatedContourImage),
+		width * sizeof(NppiPoint32f),
+		static_cast<NppiContourPixelDirectionInfo*>(contourDirectionImg),
+		width * sizeof(NppiContourPixelDirectionInfo),
+		static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
+		h_geometryBuffer.data(),
+		static_cast<NppiPoint32f*>(interpolatedContourImage),
+		h_contourFound.data(),
+		static_cast<Npp32u*>(contourPixelOffset),
+		h_contourOffset.data(),
+		h_contourInfo.nTotalImagePixelContourCount,
+		maxNumber,
+		1,
+		maxNumber,
+		static_cast<NppiContourBlockSegment*>(d_blockSegment),
+		h_blockSegment.data(),
+		imageSize,
+		ctx
+	);
+
+	std::vector<cv::Point2i> contour;
+
+	while (contour.empty())
+	{
+		for (int i = 1; i < h_contourOffset.size()-1; ++i)
+		{
+			auto startOffset = h_contourOffset[i];
+			auto nextOffset = h_contourOffset[i + 1];
+			assert(startOffset < nextOffset);
+			auto diff = nextOffset - startOffset;
+			contour.resize(diff);
+			for (int j = 0; j < diff; ++j)
+			{
+				auto curIdx = startOffset + j;
+				contour[j] =(cv::Point2i(h_geometryBuffer[curIdx].oContourCenterPixelLocation.x, h_geometryBuffer[curIdx].oContourCenterPixelLocation.y));
+				
+			}
+			if (!contour.empty())
+				break;
+		}
+	}
+
+
+
+
+	if (status != NPP_SUCCESS)
+	{
+		std::cerr << "Error in nppiContoursImageMarchingSquaresInterpolation_32f_C1R_Ctx: " << status << '\n';
+		return -1;
+	}
+
+
+
+	cv::Mat interImage32f(height, width, CV_32FC1);
+	interpolatedContourImage.download(interImage32f.data, sizeInBytes * sizeof(Npp32f));
+
+	cv::Mat interImage;
+	cv::normalize(interImage32f, interImage, 0, 1, cv::NORM_MINMAX);
 
 
 
@@ -193,11 +255,27 @@ int main ()	{
 
 
 
-	cv::imshow("Input", img);
+	/*cv::imshow("Input", img);*/
 	cv::imshow("Binary", binaryMask);
 	cv::imshow("Labels", labelMat);
 	cv::imshow("Contour", h_contourImg);
 	cv::imshow("Geometry", geometryImg);
+
+	// draw contour on image
+	//cv::Mat contourOnImage;
+	//cv::cvtColor(img, contourOnImage, cv::COLOR_GRAY2BGR);
+
+	//for (int i = 0; i < contour.size(); i++)
+	//{
+	//	auto p = contour[i];
+	//	if (p.x >= 0 && p.x < contourOnImage.cols && p.y >= 0 && p.y < contourOnImage.rows)
+	//	{
+	//		cv::Vec3b color = cv::Vec3b{ 0, static_cast<unsigned char>(i / contour.size()),0 };
+	//		contourOnImage.at<cv::Vec3b>(p) = color;
+	//	}
+	//}
+	/*cv::imshow("Contour on Image", contourOnImage);*/
+	cv::imshow("Interpolated", interImage);
 	cv::waitKey(0);
 	return 0;
 

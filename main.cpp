@@ -1,7 +1,7 @@
 
 #include <opencv2/opencv.hpp>
 #include <npp.h>
-#include <nppcore.h>
+
 
 #include "CudaBuffer.h"
 

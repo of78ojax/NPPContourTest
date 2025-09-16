@@ -247,7 +247,11 @@ int main() {
 		ctx
 	);
 
-	std::vector<cv::Point2i> contour;
+
+	std::vector<cv::Point2f> interpolatedImg(width * height);
+	interpolatedContourImage.download(interpolatedImg.data(), width * height);
+
+	std::vector<cv::Point2f> contour;
 
 	while (contour.empty())
 	{
@@ -255,11 +259,13 @@ int main() {
 		{
 			auto startOffset = h_contourOffset[i];
 			auto nMaxNumContourPoints = h_contourFound[i];
-			for (unsigned int i = 0; i < nMaxNumContourPoints; ++i)
+			for (unsigned int j = 0; j < nMaxNumContourPoints; ++j)
 			{
-				auto& curNode = h_geometryBuffer[startOffset + i];
-				contour.push_back(cv::Point2i(curNode.oContourCenterPixelLocation.x, curNode.oContourCenterPixelLocation.y));
-				curNode = h_geometryBuffer[startOffset + curNode.nNextContourPixelIndex];
+				auto& curNode = h_geometryBuffer[startOffset + j];
+				auto index1D = curNode.oContourCenterPixelLocation.x + curNode.oContourCenterPixelLocation.y * height;
+				contour.push_back(interpolatedImg[index1D]);
+
+				std::cout << contour[j] << "\n";
 			}
 
 
@@ -279,27 +285,11 @@ int main() {
 
 
 
-	cv::Mat interImage32f(height, width, CV_32FC2);
-	interpolatedContourImage.download(interImage32f.data, sizeInBytes);
-
-	cv::Mat zeroImage = cv::Mat::zeros(height,width,CV_32F);
-
-	cv::Mat interImage,interImageNorm;
-	cv::merge(std::vector<cv::Mat>{interImage32f, zeroImage}, interImage);
-	cv::normalize(interImage, interImageNorm,1.,0.,cv::NORM_INF);
-
-
 	if (img.empty()) {
 		std::cerr << "Could not read the image" << std::endl;
 		return 1;
 	}
 
-	std::vector<NppiPoint32f> points(sizeInBytes);
-	interpolatedContourImage.download(points.data(), sizeInBytes);
-	for (int i = 0; i < points.size(); ++i)
-	{
-		std::cout << "Point " << i << ": (" << points[i].x << ", " << points[i].y << ")\n";
-	}
 
 	
 
@@ -310,7 +300,7 @@ int main() {
 	cv::imshow("Labels", labelMat);
 	cv::imshow("Contour", h_contourImg);
 	cv::imshow("Geometry", geometryImg);
-	cv::imshow("Inter", interImageNorm);
+	
 
 	//draw contour on image
 	cv::Mat contourOnImage;

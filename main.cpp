@@ -23,7 +23,7 @@ inline float getPixelDistance(const NppiPoint& a,
 {
 	float a0 = (a.x - b.x);
 	float a1 = (a.y - b.y);
-	return sqrt(a0  * a0 + a1 * a1);
+	return sqrt(a0 * a0 + a1 * a1);
 }
 
 std::vector<NppiPoint> stitch(std::vector<std::vector<NppiPoint>>& segments) {
@@ -317,70 +317,52 @@ int main() {
 	std::vector<cv::Point2f> h_interpolatedImg(width * height);
 	interpolatedContourImage.download(h_interpolatedImg.data(), width * height);
 
-	std::vector<NppiPoint> contour;
-
-	bool firstValidDirectionFound = false;
-	NppiContourPixelDirectionInfo firstValidDirection;
-
-	std::vector<std::vector<NppiPoint>> contourSegments(1);
 
 
-	while (contour.empty())
+
+	std::vector<std::vector<NppiPoint>> contourSegments;
+	std::vector<std::vector<NppiPoint>> finalContours;
+
+
+	for (int i = 1; i < h_contourOffset.size() - 1; ++i)
 	{
-		for (int i = 1; i < h_contourOffset.size() - 1; ++i)
+		int segmentCounter = 0;
+		auto startOffset = h_contourOffset[i];
+		auto nMaxNumContourPoints = h_contourFound[i];
+		if (nMaxNumContourPoints == 0)
+			continue;
+
+
+		auto& curNode = h_geometryBuffer[startOffset];
+		auto lastPoint = curNode.oContourCenterPixelLocation;
+		contourSegments.push_back(std::vector<NppiPoint>());
+
+		contourSegments[segmentCounter].push_back(lastPoint);
+
+		for (unsigned int j = 1; j < nMaxNumContourPoints - 1; ++j)
 		{
-			int segmentCounter = 0;
-			auto startOffset = h_contourOffset[i];
-			auto nMaxNumContourPoints = h_contourFound[i];
-			auto& curNode = h_geometryBuffer[startOffset];
-			auto index1D = curNode.oContourCenterPixelLocation.x + curNode.oContourCenterPixelLocation.y * height;
-			auto lastPoint = curNode.oContourCenterPixelLocation;
-			contourSegments[segmentCounter].push_back(lastPoint);
+			curNode = h_geometryBuffer[startOffset + j];
+			if (curNode.oContourCenterPixelLocation == NppiPoint(-1, -1))
+				continue;
 
-			for (unsigned int j = 1; j < nMaxNumContourPoints-1; ++j)
+			float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
+			if (pixelDis > 1)
 			{
-				curNode = h_geometryBuffer[startOffset + j];
-				if (curNode.oContourCenterPixelLocation == NppiPoint(-1,-1))
-					continue;
-
-				float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
-				if (pixelDis > 1)
-				{
-					contourSegments.push_back(std::vector<NppiPoint>());
-					segmentCounter++;
-				}
-				contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
-				lastPoint = curNode.oContourCenterPixelLocation;
+				contourSegments.push_back(std::vector<NppiPoint>());
+				segmentCounter++;
 			}
-
-			size_t sumSize = 0;
-			for (int d = 0; d < contourSegments.size(); ++d)
-			{
-				sumSize += contourSegments[d].size();
-			}
-			contour = stitch(contourSegments);
-
-
-			if (!contour.empty())
-				break;
+			contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
+			lastPoint = curNode.oContourCenterPixelLocation;
 		}
-	}
 
-
-	// simple recheck
-	for (int i = 1; i < contour.size(); ++i)
-	{
-		if (getPixelDistance(contour[i], contour[i - 1]) > 2)
+		size_t sumSize = 0;
+		for (int d = 0; d < contourSegments.size(); ++d)
 		{
-			std::cout << std::format("{}, {}   ",contour[i].x,contour[i].y)  << std::format("{}, {}   ", contour[i-1].x, contour[i-1].y) << "\n";
+			sumSize += contourSegments[d].size();
 		}
+		finalContours.push_back(stitch(contourSegments));
+
 	}
-
-
-
-
-
-
 
 
 	if (status != NPP_SUCCESS)
@@ -397,7 +379,7 @@ int main() {
 	}
 
 
-	
+
 
 
 
@@ -406,22 +388,26 @@ int main() {
 	cv::imshow("Labels", labelMat);
 	cv::imshow("Contour", h_contourImg);
 	cv::imshow("Geometry", geometryImg);
-	
+
 
 	//draw contour on image
 	cv::Mat contourOnImage;
 	cv::cvtColor(img, contourOnImage, cv::COLOR_GRAY2BGR);
 
-	for (int i = 0; i < contour.size(); i++)
+	for (int contourIdx = 0; contourIdx < finalContours.size(); ++contourIdx)
 	{
-		auto p = contour[i];
-		if (p.x >= 0 && p.x < contourOnImage.cols && p.y >= 0 && p.y < contourOnImage.rows)
+		auto& contour = finalContours[contourIdx];
+
+		for (int i = 0; i < contour.size(); i++)
 		{
-			cv::Vec3b color = cv::Vec3b{ 0, static_cast<unsigned char>(i / (float)contour.size() * 255),0 };
-			contourOnImage.at<cv::Vec3b>(cv::Point2i(p.x,p.y)) = color;
+			auto p = contour[i];
+			if (p.x >= 0 && p.x < contourOnImage.cols && p.y >= 0 && p.y < contourOnImage.rows)
+			{
+				cv::Vec3b color = cv::Vec3b{ 0, static_cast<unsigned char>(i / (float)contour.size() * 255),0 };
+				contourOnImage.at<cv::Vec3b>(cv::Point2i(p.x, p.y)) = color;
+			}
 		}
 	}
-
 
 	cv::imshow("Contour on Image", contourOnImage);
 

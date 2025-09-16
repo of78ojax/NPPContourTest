@@ -5,71 +5,8 @@
 
 
 #include "CudaBuffer.h"
+#include <Contour.h>
 
-inline bool operator!=(const NppiPoint& a,
-	const NppiPoint& b)
-{
-	return !(a.x == b.x && a.y == b.y);
-}
-
-inline bool operator==(const NppiPoint& a,
-	const NppiPoint& b)
-{
-	return (a.x == b.x && a.y == b.y);
-}
-
-inline float getPixelDistance(const NppiPoint& a,
-	const NppiPoint& b)
-{
-	float a0 = (a.x - b.x);
-	float a1 = (a.y - b.y);
-	return sqrt(a0 * a0 + a1 * a1);
-}
-
-std::vector<NppiPoint> stitch(std::vector<std::vector<NppiPoint>>& segments) {
-	if (segments.empty()) return {};
-
-	// start with one segment
-	std::vector<NppiPoint> result = std::move(segments.front());
-	segments.erase(segments.begin());
-
-	while (!segments.empty()) {
-		auto bestIt = segments.begin();
-		double bestDist = std::numeric_limits<double>::max();
-		enum { APPEND, APPEND_REV, PREPEND, PREPEND_REV } bestMode = APPEND;
-
-		for (auto it = segments.begin(); it != segments.end(); ++it) {
-			const auto& seg = *it;
-
-			float d1 = getPixelDistance(result.back(), seg.front());
-			if (d1 < bestDist) { bestDist = d1; bestIt = it; bestMode = APPEND; }
-
-			float d2 = getPixelDistance(result.back(), seg.back());
-			if (d2 < bestDist) { bestDist = d2; bestIt = it; bestMode = APPEND_REV; }
-
-			float d3 = getPixelDistance(result.front(), seg.front());
-			if (d3 < bestDist) { bestDist = d3; bestIt = it; bestMode = PREPEND_REV; }
-
-			float d4 = getPixelDistance(result.front(), seg.back());
-			if (d4 < bestDist) { bestDist = d4; bestIt = it; bestMode = PREPEND; }
-		}
-
-		// Attach chosen segment in right orientation
-		std::vector<NppiPoint> chosen = std::move(*bestIt);
-		segments.erase(bestIt);
-
-		switch (bestMode) {
-		case APPEND:      result.insert(result.end(), chosen.begin(), chosen.end()); break;
-		case APPEND_REV:  std::reverse(chosen.begin(), chosen.end());
-			result.insert(result.end(), chosen.begin(), chosen.end()); break;
-		case PREPEND:     result.insert(result.begin(), chosen.begin(), chosen.end()); break;
-		case PREPEND_REV: std::reverse(chosen.begin(), chosen.end());
-			result.insert(result.begin(), chosen.begin(), chosen.end()); break;
-		}
-	}
-
-	return result;
-}
 
 
 int main() {
@@ -95,14 +32,13 @@ int main() {
 
 
 	NppStreamContext ctx = {
-
-	.hStream = nullptr,
-	.nMultiProcessorCount = prop.multiProcessorCount,
-	.nMaxThreadsPerMultiProcessor = prop.maxThreadsPerMultiProcessor,
-	.nMaxThreadsPerBlock = prop.maxThreadsPerBlock ,
-	.nSharedMemPerBlock = prop.sharedMemPerBlock,
-	.nCudaDevAttrComputeCapabilityMajor = prop.major,
-	.nCudaDevAttrComputeCapabilityMinor = prop.minor,
+		.hStream = nullptr,
+		.nMultiProcessorCount = prop.multiProcessorCount,
+		.nMaxThreadsPerMultiProcessor = prop.maxThreadsPerMultiProcessor,
+		.nMaxThreadsPerBlock = prop.maxThreadsPerBlock ,
+		.nSharedMemPerBlock = prop.sharedMemPerBlock,
+		.nCudaDevAttrComputeCapabilityMajor = prop.major,
+		.nCudaDevAttrComputeCapabilityMinor = prop.minor,
 	};
 
 	auto status = NPP_SUCCESS;

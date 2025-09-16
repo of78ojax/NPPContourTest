@@ -1,9 +1,76 @@
 
+#include <bitset>
 #include <opencv2/opencv.hpp>
 #include <npp.h>
 
 
 #include "CudaBuffer.h"
+
+inline bool operator!=(const NppiPoint& a,
+	const NppiPoint& b)
+{
+	return !(a.x == b.x && a.y == b.y);
+}
+
+inline bool operator==(const NppiPoint& a,
+	const NppiPoint& b)
+{
+	return (a.x == b.x && a.y == b.y);
+}
+
+inline float getPixelDistance(const NppiPoint& a,
+	const NppiPoint& b)
+{
+	float a0 = (a.x - b.x);
+	float a1 = (a.y - b.y);
+	return sqrt(a0  * a0 + a1 * a1);
+}
+
+std::vector<NppiPoint> stitch(std::vector<std::vector<NppiPoint>>& segments) {
+	if (segments.empty()) return {};
+
+	// start with one segment
+	std::vector<NppiPoint> result = std::move(segments.front());
+	segments.erase(segments.begin());
+
+	while (!segments.empty()) {
+		auto bestIt = segments.begin();
+		double bestDist = std::numeric_limits<double>::max();
+		enum { APPEND, APPEND_REV, PREPEND, PREPEND_REV } bestMode = APPEND;
+
+		for (auto it = segments.begin(); it != segments.end(); ++it) {
+			const auto& seg = *it;
+
+			float d1 = getPixelDistance(result.back(), seg.front());
+			if (d1 < bestDist) { bestDist = d1; bestIt = it; bestMode = APPEND; }
+
+			float d2 = getPixelDistance(result.back(), seg.back());
+			if (d2 < bestDist) { bestDist = d2; bestIt = it; bestMode = APPEND_REV; }
+
+			float d3 = getPixelDistance(result.front(), seg.front());
+			if (d3 < bestDist) { bestDist = d3; bestIt = it; bestMode = PREPEND_REV; }
+
+			float d4 = getPixelDistance(result.front(), seg.back());
+			if (d4 < bestDist) { bestDist = d4; bestIt = it; bestMode = PREPEND; }
+		}
+
+		// Attach chosen segment in right orientation
+		std::vector<NppiPoint> chosen = std::move(*bestIt);
+		segments.erase(bestIt);
+
+		switch (bestMode) {
+		case APPEND:      result.insert(result.end(), chosen.begin(), chosen.end()); break;
+		case APPEND_REV:  std::reverse(chosen.begin(), chosen.end());
+			result.insert(result.end(), chosen.begin(), chosen.end()); break;
+		case PREPEND:     result.insert(result.begin(), chosen.begin(), chosen.end()); break;
+		case PREPEND_REV: std::reverse(chosen.begin(), chosen.end());
+			result.insert(result.begin(), chosen.begin(), chosen.end()); break;
+		}
+	}
+
+	return result;
+}
+
 
 int main() {
 	int cudaDevice = 0;
@@ -43,7 +110,7 @@ int main() {
 
 
 	// create sinus image
-	cv::Mat img(200, 200, CV_8UC1);
+	cv::Mat img(1920, 1080, CV_8UC1);
 	for (int i = 0; i < img.rows; ++i)
 	{
 		for (int j = 0; j < img.cols; ++j)
@@ -220,9 +287,6 @@ int main() {
 
 
 	ManagedCUDABuffer interpolatedContourImage(sizeInBytes * sizeof(NppiPoint32f));
-	d_blockSegment.setTo(0);
-	h_blockSegment.clear();
-	h_blockSegment.resize(blockListSize / sizeof(NppiContourBlockSegment));
 
 	status = nppiContoursImageMarchingSquaresInterpolation_32f_C1R_Ctx(
 		static_cast<Npp8u*>(contourImg),
@@ -247,32 +311,74 @@ int main() {
 		ctx
 	);
 
+	std::vector< NppiContourPixelDirectionInfo> h_directionImg(width * height);
+	contourDirectionImg.download(h_directionImg.data(), width * height);
 
-	std::vector<cv::Point2f> interpolatedImg(width * height);
-	interpolatedContourImage.download(interpolatedImg.data(), width * height);
+	std::vector<cv::Point2f> h_interpolatedImg(width * height);
+	interpolatedContourImage.download(h_interpolatedImg.data(), width * height);
 
-	std::vector<cv::Point2f> contour;
+	std::vector<NppiPoint> contour;
+
+	bool firstValidDirectionFound = false;
+	NppiContourPixelDirectionInfo firstValidDirection;
+
+	std::vector<std::vector<NppiPoint>> contourSegments(1);
+
 
 	while (contour.empty())
 	{
 		for (int i = 1; i < h_contourOffset.size() - 1; ++i)
 		{
+			int segmentCounter = 0;
 			auto startOffset = h_contourOffset[i];
 			auto nMaxNumContourPoints = h_contourFound[i];
-			for (unsigned int j = 0; j < nMaxNumContourPoints; ++j)
-			{
-				auto& curNode = h_geometryBuffer[startOffset + j];
-				auto index1D = curNode.oContourCenterPixelLocation.x + curNode.oContourCenterPixelLocation.y * height;
-				contour.push_back(interpolatedImg[index1D]);
+			auto& curNode = h_geometryBuffer[startOffset];
+			auto index1D = curNode.oContourCenterPixelLocation.x + curNode.oContourCenterPixelLocation.y * height;
+			auto lastPoint = curNode.oContourCenterPixelLocation;
+			contourSegments[segmentCounter].push_back(lastPoint);
 
-				std::cout << contour[j] << "\n";
+			for (unsigned int j = 1; j < nMaxNumContourPoints-1; ++j)
+			{
+				curNode = h_geometryBuffer[startOffset + j];
+				if (curNode.oContourCenterPixelLocation == NppiPoint(-1,-1))
+					continue;
+
+				float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
+				if (pixelDis > 1)
+				{
+					contourSegments.push_back(std::vector<NppiPoint>());
+					segmentCounter++;
+				}
+				contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
+				lastPoint = curNode.oContourCenterPixelLocation;
 			}
+
+			size_t sumSize = 0;
+			for (int d = 0; d < contourSegments.size(); ++d)
+			{
+				sumSize += contourSegments[d].size();
+			}
+			contour = stitch(contourSegments);
 
 
 			if (!contour.empty())
 				break;
 		}
 	}
+
+
+	// simple recheck
+	for (int i = 1; i < contour.size(); ++i)
+	{
+		if (getPixelDistance(contour[i], contour[i - 1]) > 2)
+		{
+			std::cout << std::format("{}, {}   ",contour[i].x,contour[i].y)  << std::format("{}, {}   ", contour[i-1].x, contour[i-1].y) << "\n";
+		}
+	}
+
+
+
+
 
 
 
@@ -312,7 +418,7 @@ int main() {
 		if (p.x >= 0 && p.x < contourOnImage.cols && p.y >= 0 && p.y < contourOnImage.rows)
 		{
 			cv::Vec3b color = cv::Vec3b{ 0, static_cast<unsigned char>(i / (float)contour.size() * 255),0 };
-			contourOnImage.at<cv::Vec3b>(p) = color;
+			contourOnImage.at<cv::Vec3b>(cv::Point2i(p.x,p.y)) = color;
 		}
 	}
 

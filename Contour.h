@@ -125,21 +125,27 @@ struct ContourDetector
     ManagedCUDABuffer infoBuffer;
     ManagedCUDABuffer scratchBuffer;
 
-    ManagedCUDABuffer contourImgage;
+    ManagedCUDABuffer contourImage;
     ManagedCUDABuffer contourDirectionImage;
 
 
     ManagedCUDABuffer contourPixelCount;
     ManagedCUDABuffer contourPixelFound;
     ManagedCUDABuffer contourStartingOffset;
+    
 
     ManagedCUDABuffer geometryBuffer;
+    ManagedCUDABuffer geometryInterpolatedBuffer;
     ManagedCUDABuffer blockSegment;
+
+    ManagedCUDABuffer interpolatedContourImage;
 
 
     std::vector<Npp32u> contourStartingOffsetHost;
+    std::vector<Npp8u> geometryImageHost;
     std::vector<Npp32u> contourPixelCountHost;
     std::vector<Npp32u> contourPixelFoundHost;
+    std::vector<NppiPoint32f> geometryInterpolatedHost;
 
     std::vector<NppiCompressedMarkerLabelsInfo> markerLabelsHost;
     std::vector<NppiContourPixelGeometryInfo> geometryBufferHost;
@@ -256,25 +262,25 @@ struct ContourDetector
     {
         unsigned int listSize;
         checkNpp(
-        nppiCompressedMarkerLabelsUFGetInfoListSize_32u_C1R(compressedNumberLabels, &listSize)
+            nppiCompressedMarkerLabelsUFGetInfoListSize_32u_C1R(compressedNumberLabels, &listSize)
         );
 
         infoBuffer.alloc(listSize);
 
-        //contourDirectionImage.alloc(sizeInBytes * sizeof(NppiContourPixelDirectionInfo));
+        contourDirectionImage.alloc(imageSize.width * imageSize.height * sizeof(NppiContourPixelDirectionInfo));
 
         constexpr Npp32u additionalBuffer = 4;
 
         contourPixelCount.alloc(sizeof(Npp32u) * (compressedNumberLabels + additionalBuffer));
         contourPixelFound.alloc(sizeof(Npp32u) * (compressedNumberLabels + additionalBuffer));
         contourStartingOffset.alloc(sizeof(Npp32u) * (compressedNumberLabels + additionalBuffer));
-
-        // std::vector<Npp32u> h_contourCount(maxNumber + 4);
-        // std::vector<Npp32u> h_contourFound(maxNumber + 4);
-        // std::vector<Npp32u> h_contourOffset(maxNumber + 4);
+        contourImage.alloc(imageSize.width * imageSize.height);
+        
+        contourPixelFoundHost.resize(compressedNumberLabels + additionalBuffer);
         contourStartingOffsetHost.resize(compressedNumberLabels + additionalBuffer);
         contourPixelCountHost.resize(compressedNumberLabels + additionalBuffer);
 
+        
 
         checkNpp(
             nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx(
@@ -283,9 +289,9 @@ struct ContourDetector
                 imageSize,
                 compressedNumberLabels,
                 static_cast<NppiCompressedMarkerLabelsInfo*>(infoBuffer),
-                nullptr, //static_cast<Npp8u*>(contourImg),
-                0, //imageSize.width * sizeof(Npp8u),
-                nullptr, //static_cast<NppiContourPixelDirectionInfo*>(contourDirectionImage),
+                static_cast<Npp8u*>(contourImage),
+                imageSize.width * sizeof(Npp8u),
+                static_cast<NppiContourPixelDirectionInfo*>(contourDirectionImage),
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 &contourInfoHost,
                 static_cast<Npp32u*>(contourPixelCount),
@@ -317,13 +323,12 @@ struct ContourDetector
             nppiCompressedMarkerLabelsUFGetGeometryListsSize_C1R(finalHostOffset, &geometryBufferSize)
         );
         geometryBuffer.alloc(geometryBufferSize);
-        contourDirectionImage.alloc(imageSize.width * imageSize.height * sizeof(NppiContourPixelDirectionInfo));
-        
+      
+
         markerLabelsHost.resize(imageSize.width * imageSize.height);
         geometryBufferHost.resize(geometryBufferSize / sizeof(NppiContourPixelGeometryInfo));
 
-       
-
+        geometryImageHost.resize(imageSize.width * imageSize.height);
 
         Npp32u blockSegmentListSize;
         checkNpp(
@@ -336,12 +341,12 @@ struct ContourDetector
                 &blockSegmentListSize)
         );
 
-       
-
 
         blockSegment.alloc(blockSegmentListSize);
-        blockSegmentHost.resize(blockSegmentListSize/sizeof(NppiContourPixelDirectionInfo));
-       
+        blockSegmentHost.resize(blockSegmentListSize / sizeof(NppiContourPixelDirectionInfo));
+
+        
+
         checkNpp(
             nppiCompressedMarkerLabelsUFContoursGenerateGeometryLists_C1R_Ctx(
                 static_cast<NppiCompressedMarkerLabelsInfo*>(infoBuffer),
@@ -350,7 +355,7 @@ struct ContourDetector
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
                 geometryBufferHost.data(),
-                nullptr,
+                geometryImageHost.data(),
                 imageSize.width,
                 static_cast<Npp32u*>(contourPixelCount),
                 static_cast<Npp32u*>(contourPixelFound),
@@ -368,5 +373,45 @@ struct ContourDetector
                 ctx
             )
         );
+    }
+
+    void interpolate()
+    {
+        interpolatedContourImage.alloc(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
+        geometryInterpolatedBuffer.alloc(contourInfoHost.nTotalImagePixelContourCount * sizeof(NppiPoint32f));
+     
+
+        
+        checkNpp(
+            nppiContoursImageMarchingSquaresInterpolation_32f_C1R_Ctx(
+                static_cast<Npp8u*>(contourImage),
+                imageSize.width,
+                static_cast<NppiPoint32f*>(interpolatedContourImage),
+                imageSize.width * sizeof(NppiPoint32f),
+                static_cast<NppiContourPixelDirectionInfo*>(contourDirectionImage),
+                imageSize.width * sizeof(NppiContourPixelDirectionInfo),
+                static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
+                nullptr,
+                static_cast<NppiPoint32f*>(geometryInterpolatedBuffer),
+                contourPixelFoundHost.data(),
+                static_cast<Npp32u*>(contourStartingOffset),
+                contourStartingOffsetHost.data(),
+                contourInfoHost.nTotalImagePixelContourCount,
+                compressedNumberLabels,
+                1,
+                compressedNumberLabels,
+                static_cast<NppiContourBlockSegment*>(blockSegment),
+                blockSegmentHost.data(),
+                imageSize,
+                ctx
+            )
+        );
+
+        geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
+        geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
+
+        
+
+        
     }
 };

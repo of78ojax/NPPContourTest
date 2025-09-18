@@ -1,10 +1,12 @@
 #pragma once
 
-#include <CudaBuffer.h>
-#include <nppdefs.h>
+
 #include <source_location>
 #include <vector>
 #include <sstream>
+
+#include <CudaBuffer.h>
+#include <nppdefs.h>
 
 
 inline bool operator!=(const NppiPoint& a,
@@ -113,11 +115,11 @@ inline std::vector<NppiPoint> stitch(std::vector<std::vector<NppiPoint>>& segmen
 
 struct ContourDetector
 {
-    NppStreamContext ctx;
+    NppStreamContext ctx = {};
 
-    NppiSize imageSize;
-    int compressedNumberLabels;
-    NppiContourTotalsInfo contourInfoHost;
+    NppiSize imageSize = {};
+    int compressedNumberLabels = 0;
+    NppiContourTotalsInfo contourInfoHost = {};
 
     ManagedCUDABuffer inputImage;
     ManagedCUDABuffer binaryImage;
@@ -323,9 +325,14 @@ struct ContourDetector
             nppiCompressedMarkerLabelsUFGetGeometryListsSize_C1R(finalHostOffset, &geometryBufferSize)
         );
         geometryBuffer.alloc(geometryBufferSize);
-      
 
-        markerLabelsHost.resize(imageSize.width * imageSize.height);
+        unsigned int listSize;
+        checkNpp(
+            nppiCompressedMarkerLabelsUFGetInfoListSize_32u_C1R(compressedNumberLabels, &listSize)
+        );
+
+
+        markerLabelsHost.resize(listSize / sizeof(NppiCompressedMarkerLabelsInfo));
         geometryBufferHost.resize(geometryBufferSize / sizeof(NppiContourPixelGeometryInfo));
 
         geometryImageHost.resize(imageSize.width * imageSize.height);
@@ -343,7 +350,7 @@ struct ContourDetector
 
 
         blockSegment.alloc(blockSegmentListSize);
-        blockSegmentHost.resize(blockSegmentListSize / sizeof(NppiContourPixelDirectionInfo));
+        blockSegmentHost.resize(blockSegmentListSize / sizeof(NppiContourBlockSegment));
 
         
 
@@ -391,8 +398,8 @@ struct ContourDetector
                 static_cast<NppiContourPixelDirectionInfo*>(contourDirectionImage),
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
+                geometryBufferHost.data(),
                 nullptr,
-                static_cast<NppiPoint32f*>(geometryInterpolatedBuffer),
                 contourPixelFoundHost.data(),
                 static_cast<Npp32u*>(contourStartingOffset),
                 contourStartingOffsetHost.data(),
@@ -407,8 +414,17 @@ struct ContourDetector
             )
         );
 
-        geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
-        geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
+        // geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
+        // geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
+        // for (auto element : geometryInterpolatedHost)
+        // {
+        //     // chechk if not 0,0
+        //     if (element.x != 0 || element.y != 0)
+        //     {
+        //         // found a non zero element
+        //         std::cout << element.x << " " << element.y << std::endl;
+        //     }
+        // }
 
         
 

@@ -27,7 +27,7 @@ int main() {
 	memcpy(image.data(), img.data, width * height * sizeof(uchar));
 	
 	ContourDetector detector;
-
+	
 	detector.threshold(image,width,height,120);
 	detector.segmentRegions();
 	detector.generateLabelInfo();
@@ -46,10 +46,14 @@ int main() {
 	labelMat32.convertTo(labelMat, CV_8UC1);
 	detector.contourImage.download(contourImage.data,numPixel);
 	memcpy(geometry.data, detector.geometryImageHost.data(),numPixel);
-
+	
 	cv::Mat interpolationImage(height, width, CV_32FC2);
 	detector.interpolatedContourImage.download(interpolationImage.data,numPixel * sizeof(NppiPoint32f));
-	
+	cv::Mat interpolatedImage3C(height, width, CV_32FC3);
+	cv::Mat zeros(height, width, CV_32FC1, cv::Scalar(0));
+	std::vector<cv::Mat> channels = { interpolationImage, zeros };
+	cv::merge(channels, interpolatedImage3C);
+
 
 
 
@@ -58,30 +62,8 @@ int main() {
 	cv::imshow("Labels", labelMat);
 	cv::imshow("Contour", contourImage);
 	cv::imshow("Geometry", geometry);
-
+	cv::imshow("Interpolated", interpolatedImage3C);
 	
-
-
-	// //draw contour on image
-	// cv::Mat contourOnImage;
-	// cv::cvtColor(img, contourOnImage, cv::COLOR_GRAY2BGR);
-
-	// for (int contourIdx = 0; contourIdx < finalContours.size(); ++contourIdx)
-	// {
-	// 	auto& contour = finalContours[contourIdx];
-	//
-	// 	for (int i = 0; i < contour.size(); i++)
-	// 	{
-	// 		auto p = contour[i];
-	// 		if (p.x >= 0 && p.x < contourOnImage.cols && p.y >= 0 && p.y < contourOnImage.rows)
-	// 		{
-	// 			cv::Vec3b color = cv::Vec3b{ 0, static_cast<unsigned char>(i / (float)contour.size() * 255),0 };
-	// 			contourOnImage.at<cv::Vec3b>(cv::Point2i(p.x, p.y)) = color;
-	// 		}
-	// 	}
-	// }
-
-	// cv::imshow("Contour on Image", contourOnImage);
 
 	cv::waitKey(0);
 	return 0;

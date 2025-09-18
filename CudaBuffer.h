@@ -36,6 +36,7 @@ protected:
 	size_t sizeInBytes{ 0 };
 	void* dPtr{ nullptr };
 public:
+	virtual ~CUDABuffer() = default;
 	CUDABuffer() = default;
 	CUDABuffer(void* ptr, size_t sizeinBytes) : sizeInBytes(sizeinBytes), dPtr(ptr) {}
 
@@ -133,14 +134,15 @@ public:
 class ManagedCUDABuffer : public CUDABuffer
 {
 public:
-	ManagedCUDABuffer() {};
-	~ManagedCUDABuffer() {
+	ManagedCUDABuffer() = default;
+	~ManagedCUDABuffer() override
+	{
 		if (dPtr)
-			free();
+			ManagedCUDABuffer::free();
 	}
 	ManagedCUDABuffer(size_t size)
 	{
-		alloc(size);
+		ManagedCUDABuffer::alloc(size);
 	}
 
 	//! re-size buffer to given number of bytes

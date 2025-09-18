@@ -6,7 +6,8 @@
 #include <sstream>
 
 #include <CudaBuffer.h>
-#include <nppdefs.h>
+#define NPP_PLUS
+#include <npp.h>
 
 
 inline bool operator!=(const NppiPoint& a,
@@ -181,6 +182,11 @@ struct ContourDetector
             ss << "Error getting stream flags: " << cudaGetErrorString(error) << '\n';
             throw std::runtime_error(ss.str());
         }
+
+        // print npp version
+
+        std::cout << "NPP Version: " << nppGetLibVersion()->major << "." << nppGetLibVersion()->minor << "." << nppGetLibVersion()->build
+                  << "\n";
 
 
         ctx = {
@@ -399,7 +405,7 @@ struct ContourDetector
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
                 geometryBufferHost.data(),
-                nullptr,
+                static_cast<NppiPoint32f*>(geometryInterpolatedBuffer),
                 contourPixelFoundHost.data(),
                 static_cast<Npp32u*>(contourStartingOffset),
                 contourStartingOffsetHost.data(),
@@ -414,17 +420,17 @@ struct ContourDetector
             )
         );
 
-        // geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
-        // geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
-        // for (auto element : geometryInterpolatedHost)
-        // {
-        //     // chechk if not 0,0
-        //     if (element.x != 0 || element.y != 0)
-        //     {
-        //         // found a non zero element
-        //         std::cout << element.x << " " << element.y << std::endl;
-        //     }
-        // }
+        geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
+        geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
+        for (auto element : geometryInterpolatedHost)
+        {
+            // chechk if not 0,0
+            if (element.x != 0 || element.y != 0)
+            {
+                // found a non zero element
+                std::cout << element.x << " " << element.y << std::endl;
+            }
+        }
 
         
 

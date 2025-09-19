@@ -25,8 +25,8 @@ inline bool operator==(const NppiPoint& a,
 inline float getPixelDistance(const NppiPoint& a,
                               const NppiPoint& b)
 {
-    float a0 = (a.x - b.x);
-    float a1 = (a.y - b.y);
+    float a0 = static_cast<float>(a.x - b.x);
+    float a1 = static_cast<float>(a.y - b.y);
     return sqrt(a0 * a0 + a1 * a1);
 }
 
@@ -148,7 +148,8 @@ struct ContourDetector
     std::vector<Npp8u> geometryImageHost;
     std::vector<Npp32u> contourPixelCountHost;
     std::vector<Npp32u> contourPixelFoundHost;
-    std::vector<NppiPoint32f> geometryInterpolatedHost;
+    
+    std::vector<NppiPoint32f> geometryInterpolatedImageHost;
 
     std::vector<NppiCompressedMarkerLabelsInfo> markerLabelsHost;
     std::vector<NppiContourPixelGeometryInfo> geometryBufferHost;
@@ -391,7 +392,7 @@ struct ContourDetector
     void interpolate()
     {
         interpolatedContourImage.alloc(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
-        geometryInterpolatedBuffer.alloc(contourInfoHost.nTotalImagePixelContourCount * sizeof(NppiPoint32f));
+        geometryInterpolatedImageHost.resize(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
      
 
         
@@ -405,7 +406,7 @@ struct ContourDetector
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
                 geometryBufferHost.data(),
-                static_cast<NppiPoint32f*>(geometryInterpolatedBuffer),
+                nullptr,
                 contourPixelFoundHost.data(),
                 static_cast<Npp32u*>(contourStartingOffset),
                 contourStartingOffsetHost.data(),
@@ -420,20 +421,78 @@ struct ContourDetector
             )
         );
 
-        geometryInterpolatedHost.resize(contourInfoHost.nTotalImagePixelContourCount);
-        geometryInterpolatedBuffer.download(geometryInterpolatedHost.data(),contourInfoHost.nTotalImagePixelContourCount);
-        for (auto element : geometryInterpolatedHost)
+        interpolatedContourImage.download(geometryInterpolatedImageHost.data(), imageSize.width * imageSize.height);
+        
+
+         
+               
+
+        
+    }
+
+
+    std::vector<std::vector<NppiPoint32f>> getContours()
+    {
+        std::vector<std::vector<NppiPoint32f>> result;
+
+        std::vector<std::vector<NppiPoint>> contourSegments;
+        std::vector<std::vector<NppiPoint>> finalContours;
+        
+     
+
+
+        for (int i = 1; i < contourStartingOffsetHost.size() - 1; ++i)
         {
-            // chechk if not 0,0
-            if (element.x != 0 || element.y != 0)
+            int segmentCounter = 0;
+            auto startOffset = contourStartingOffsetHost[i];
+            auto nMaxNumContourPoints = contourPixelFoundHost[i];
+            if (nMaxNumContourPoints == 0)
+                continue;
+
+
+            auto& curNode = geometryBufferHost[startOffset];
+            auto lastPoint = curNode.oContourCenterPixelLocation;
+            contourSegments.push_back(std::vector<NppiPoint>());
+
+            contourSegments[segmentCounter].push_back(lastPoint);
+
+            for (unsigned int j = 1; j < nMaxNumContourPoints - 1; ++j)
             {
-                // found a non zero element
-                std::cout << element.x << " " << element.y << std::endl;
+                curNode = geometryBufferHost[startOffset + j];
+                if (curNode.oContourCenterPixelLocation == NppiPoint(-1, -1))
+                    continue;
+
+                float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
+                if (pixelDis > 1)
+                {
+                    contourSegments.push_back(std::vector<NppiPoint>());
+                    segmentCounter++;
+                }
+                contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
+                lastPoint = curNode.oContourCenterPixelLocation;
             }
+
+            size_t sumSize = 0;
+            for (int d = 0; d < contourSegments.size(); ++d)
+            {
+                sumSize += contourSegments[d].size();
+            }
+            finalContours.push_back(stitch(contourSegments));
+
         }
 
+        result.resize(finalContours.size());
+        for (int i = 0; i < finalContours.size(); ++i)
+        {
+            std::vector<NppiPoint32f> floatingPoints;
+            for (size_t j = 0; j < finalContours[i].size(); ++j)
+            {
+                auto index1D = finalContours[i][j].y * imageSize.width + finalContours[i][j].x;
+                floatingPoints.push_back(geometryInterpolatedImageHost[index1D]);
+            }
+            result[i] = std::move(floatingPoints);
+        }
         
-
-        
+        return result;
     }
 };

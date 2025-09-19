@@ -54,7 +54,22 @@ int main() {
 	std::vector<cv::Mat> channels = { interpolationImage, zeros };
 	cv::merge(channels, interpolatedImage3C);
 
+	auto contours = detector.getContours();
 
+	cv::Mat cpyInput (height, width, CV_8UC3);
+	
+	
+
+	
+	for (const auto& contour : contours)
+	{
+		for (const auto& point : contour)
+		{
+			// draw circle at each point
+			cv::circle(cpyInput, cv::Point(point.x, point.y), 1, cv::Scalar(0, 0, 255), cv::FILLED);
+		}
+			
+	}
 
 
 	/*cv::imshow("Input", img);*/
@@ -63,6 +78,7 @@ int main() {
 	cv::imshow("Contour", contourImage);
 	cv::imshow("Geometry", geometry);
 	cv::imshow("Interpolated", interpolatedImage3C);
+	cv::imshow("Contours", cpyInput);
 	
 
 	cv::waitKey(0);

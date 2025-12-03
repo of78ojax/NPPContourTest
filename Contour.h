@@ -142,6 +142,7 @@ struct ContourDetector
     ManagedCUDABuffer blockSegment;
 
     ManagedCUDABuffer interpolatedContourImage;
+	ManagedCUDABuffer interpolatedGeometryList;
 
 
     std::vector<Npp32u> contourStartingOffsetHost;
@@ -208,27 +209,25 @@ struct ContourDetector
     }
 
 
-    void threshold(const std::vector<Npp8u>& data, const size_t width, const size_t height, Npp8u threshold)
+    void threshold(const std::vector<Npp32f>& data, const size_t width, const size_t height, Npp32f threshold)
     {
         inputImage.alloc_and_upload(data);
-        binaryImage.alloc(width * height * sizeof(Npp8u));
-
+       
+        
+        
+        
         imageSize = NppiSize((int)width, (int)height);
-
-        Npp8u lowerT = threshold + 1;
-        Npp8u upperT = threshold;
-        if (threshold == 255)
-        {
-            upperT = 254;
-            lowerT = upperT + 1;
-            std::cout << "Changing Threshold to: " << upperT << "otherwise there is nothing to threshold" << '\n';
-        }
-
-
+        
+        
         checkNpp(
-            nppiThreshold_LTValGTVal_8u_C1R_Ctx(static_cast<const Npp8u*>(inputImage), (int)width,
-                                                static_cast<Npp8u*>(binaryImage), (int)width, imageSize, lowerT, 0,
-                                                upperT, 255, ctx)
+            nppiThreshold_GTVal_32f_C1IR_Ctx(static_cast<Npp32f*>(inputImage), (int)width * sizeof(Npp32f), imageSize, threshold, 255.1, ctx)
+        );
+        
+        binaryImage.resize(width * height * sizeof(Npp8u));
+        // convert to 8u
+        checkNpp(
+            nppiConvert_32f8u_C1R_Ctx(static_cast<Npp32f*>(inputImage), (int)width * sizeof(Npp32f),
+                                      static_cast<Npp8u*>(binaryImage), (int)width * sizeof(Npp8u), imageSize,NppRoundMode::NPP_RND_ZERO, ctx)
         );
     }
 
@@ -278,7 +277,7 @@ struct ContourDetector
 
         contourDirectionImage.alloc(imageSize.width * imageSize.height * sizeof(NppiContourPixelDirectionInfo));
 
-        constexpr Npp32u additionalBuffer = 4;
+        constexpr Npp32u additionalBuffer = 1;
 
         contourPixelCount.alloc(sizeof(Npp32u) * (compressedNumberLabels + additionalBuffer));
         contourPixelFound.alloc(sizeof(Npp32u) * (compressedNumberLabels + additionalBuffer));
@@ -370,7 +369,7 @@ struct ContourDetector
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
                 geometryBufferHost.data(),
                 geometryImageHost.data(),
-                imageSize.width,
+                imageSize.width * sizeof(Npp8u),
                 static_cast<Npp32u*>(contourPixelCount),
                 static_cast<Npp32u*>(contourPixelFound),
                 contourPixelFoundHost.data(),
@@ -393,7 +392,7 @@ struct ContourDetector
     {
         interpolatedContourImage.alloc(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
         geometryInterpolatedImageHost.resize(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
-     
+		interpolatedGeometryList.resize(imageSize.width * imageSize.height * sizeof(NppiPoint32f));
 
         
         checkNpp(
@@ -406,7 +405,7 @@ struct ContourDetector
                 imageSize.width * sizeof(NppiContourPixelDirectionInfo),
                 static_cast<NppiContourPixelGeometryInfo*>(geometryBuffer),
                 geometryBufferHost.data(),
-                nullptr,
+                static_cast< NppiPoint32f*>(interpolatedGeometryList),
                 contourPixelFoundHost.data(),
                 static_cast<Npp32u*>(contourStartingOffset),
                 contourStartingOffsetHost.data(),
@@ -431,53 +430,73 @@ struct ContourDetector
     }
 
 
-    std::vector<std::vector<NppiPoint32f>> getContours()
+    std::vector<std::vector<NppiPoint32f>> getContours(bool sort = true)
     {
         std::vector<std::vector<NppiPoint32f>> result;
 
-        std::vector<std::vector<NppiPoint>> contourSegments;
+        //std::vector<std::vector<NppiPoint>> contourSegments;
         std::vector<std::vector<NppiPoint>> finalContours;
         
      
 
-
-        for (int i = 1; i < contourStartingOffsetHost.size() - 1; ++i)
+        int contourCounter = 0;
+        for (int i = 0; i < contourStartingOffsetHost.size() - 1; ++i)
         {
-            int segmentCounter = 0;
+            
             auto startOffset = contourStartingOffsetHost[i];
             auto nMaxNumContourPoints = contourPixelFoundHost[i];
             if (nMaxNumContourPoints == 0)
                 continue;
 
+            finalContours.push_back(std::vector<NppiPoint>());
+
 
             auto& curNode = geometryBufferHost[startOffset];
-            auto lastPoint = curNode.oContourCenterPixelLocation;
-            contourSegments.push_back(std::vector<NppiPoint>());
-
-            contourSegments[segmentCounter].push_back(lastPoint);
-
-            for (unsigned int j = 1; j < nMaxNumContourPoints - 1; ++j)
+            for (unsigned int j = 0; j < nMaxNumContourPoints - 1; ++j)
             {
                 curNode = geometryBufferHost[startOffset + j];
                 if (curNode.oContourCenterPixelLocation == NppiPoint(-1, -1))
                     continue;
-
-                float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
-                if (pixelDis > 1)
-                {
-                    contourSegments.push_back(std::vector<NppiPoint>());
-                    segmentCounter++;
-                }
-                contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
-                lastPoint = curNode.oContourCenterPixelLocation;
+                finalContours[contourCounter].push_back(curNode.oContourCenterPixelLocation);
             }
+            contourCounter++;
 
-            size_t sumSize = 0;
-            for (int d = 0; d < contourSegments.size(); ++d)
-            {
-                sumSize += contourSegments[d].size();
-            }
-            finalContours.push_back(stitch(contourSegments));
+            
+            // contourSegments.push_back(std::vector<NppiPoint>());
+            //
+            // contourSegments[segmentCounter].push_back(lastPoint);
+            //
+            // for (unsigned int j = 0; j < nMaxNumContourPoints - 1; ++j)
+            // {
+            //     curNode = geometryBufferHost[startOffset + j];
+            //     if (curNode.oContourCenterPixelLocation == NppiPoint(-1, -1))
+            //         continue;
+            //
+            //     float pixelDis = getPixelDistance(lastPoint, curNode.oContourCenterPixelLocation);
+            //     if (pixelDis > 1)
+            //     {
+            //         contourSegments.push_back(std::vector<NppiPoint>());
+            //         segmentCounter++;
+            //     }
+            //     contourSegments[segmentCounter].push_back(curNode.oContourCenterPixelLocation);
+            //     lastPoint = curNode.oContourCenterPixelLocation;
+            // }
+            //
+            // size_t sumSize = 0;
+            // for (int d = 0; d < contourSegments.size(); ++d)
+            // {
+            //     sumSize += contourSegments[d].size();
+            // }
+            // if (sort)
+            //     finalContours.push_back(stitch(contourSegments));
+            // else
+            // {
+            //     for (const auto& segment : contourSegments)
+            //     {
+            //         finalContours.push_back(segment);
+            //     }                
+            // }
+               
 
         }
 
@@ -488,11 +507,15 @@ struct ContourDetector
             for (size_t j = 0; j < finalContours[i].size(); ++j)
             {
                 auto index1D = finalContours[i][j].y * imageSize.width + finalContours[i][j].x;
-                floatingPoints.push_back(geometryInterpolatedImageHost[index1D]);
+                //floatingPoints.push_back(geometryInterpolatedImageHost[index1D]);
+                floatingPoints.push_back(NppiPoint32f(finalContours[i][j].x, finalContours[i][j].y));
             }
             result[i] = std::move(floatingPoints);
         }
         
         return result;
     }
+
 };
+
+
